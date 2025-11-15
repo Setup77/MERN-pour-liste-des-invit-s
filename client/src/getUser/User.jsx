@@ -6,6 +6,11 @@ import toast from "react-hot-toast";
 import "bootstrap/dist/css/bootstrap.min.css";
 import "bootstrap/dist/js/bootstrap.bundle.min.js";
 
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import html2canvas from "html2canvas";
+
+
 import $ from "jquery";
 import "datatables.net-bs5";
 import "datatables.net-bs5/css/dataTables.bootstrap5.min.css";
@@ -14,6 +19,7 @@ const User = () => {
   const [users, setUsers] = useState([]);
   const [errorMsg, setErrorMsg] = useState("");
   const [loading, setLoading] = useState(true);
+  const [userToDelete, setUserToDelete] = useState(null);
   const [formData, setFormData] = useState({
     name: "",
     address: "",
@@ -65,6 +71,69 @@ const User = () => {
     }
   }, [users.length]);
 
+
+  //--- Composant PDF d'un utilisateur
+
+  const downloadPDF = async () => {
+    const element = document.getElementById("pdfContent");
+
+    if (!element) {
+      toast.error("Erreur : contenu PDF introuvable !");
+      return;
+    }
+
+    const canvas = await html2canvas(element, {
+      scale: 2,
+      useCORS: true
+    });
+
+    const imgData = canvas.toDataURL("image/png");
+    const pdf = new jsPDF("p", "mm", "a4");
+
+    const imgWidth = 190;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+    pdf.addImage(imgData, "PNG", 10, 10, imgWidth, imgHeight);
+
+    pdf.save(`Fiche-${selectedUser.name.replace(/\s+/g, "_")}.pdf`);
+  };
+
+
+  /* Générateur PDF des utilisateurs*/
+
+  const generatePDF = () => {
+    const doc = new jsPDF();
+
+    // Titre
+    doc.setFontSize(18);
+    doc.text("Liste des Invités", 14, 20);
+
+    // Construire le tableau
+    const tableColumn = ["Nom", "Email", "Téléphone", "Address"];
+    const tableRows = [];
+
+    users.forEach((user) => {
+      tableRows.push([
+        user.name,
+        user.email,
+        user.phone,
+        user.address,
+      ]);
+    });
+
+    // Génération du tableau PDF
+    autoTable(doc, {
+      startY: 30,
+      head: [tableColumn],
+      body: tableRows,
+    });
+
+    // Télécharger
+    doc.save("liste_invites.pdf");
+  };
+
+
+
   // 🔹 Ouvrir le modal d'ajout
   const openModal = (e) => {
     e.preventDefault();
@@ -72,19 +141,6 @@ const User = () => {
     modal.show();
   };
 
-  // 🔹 Supprimer un utilisateur
-  const deleteUser = async (userId) => {
-    try {
-      const response = await axios.delete(
-        `http://localhost:3001/delete/user/${userId}`
-      );
-      setUsers((prev) => prev.filter((user) => user._id !== userId));
-      toast.success(response.data.message, { position: "top-center" });
-    } catch (error) {
-      console.error(error);
-      toast.error("Erreur lors de la suppression.");
-    }
-  };
 
   // 🔹 Gestion des inputs ajout
   const handleInputChange = (e) => {
@@ -170,55 +226,121 @@ const User = () => {
   };
 
   // 🔹 Soumission mise à jour
- const handleUpdate = async (e) => {
-  e.preventDefault();
+  const handleUpdate = async (e) => {
+    e.preventDefault();
 
-  try {
-    const formDataToSend = new FormData();
-    formDataToSend.append("name", selectedUser.name);
-    formDataToSend.append("email", selectedUser.email);
-    formDataToSend.append("address", selectedUser.address);
-    formDataToSend.append("phone", selectedUser.phone);
+    try {
+      const formDataToSend = new FormData();
+      formDataToSend.append("name", selectedUser.name);
+      formDataToSend.append("email", selectedUser.email);
+      formDataToSend.append("address", selectedUser.address);
+      formDataToSend.append("phone", selectedUser.phone);
 
-    if (selectedUser.photo instanceof File) {
-      formDataToSend.append("photo", selectedUser.photo);
+      if (selectedUser.photo instanceof File) {
+        formDataToSend.append("photo", selectedUser.photo);
+      }
+
+      // ✅ Récupérer la réponse du serveur
+      const { data } = await axios.put(
+        `http://localhost:3001/user/${selectedUser._id}`,
+        formDataToSend,
+        { headers: { "Content-Type": "multipart/form-data" } }
+      );
+
+      toast.success("Utilisateur mis à jour avec succès !");
+
+      // ✅ Utiliser les données retournées du serveur (data.user)
+      setUsers((prev) =>
+        prev.map((u) => (u._id === selectedUser._id ? data.user : u))
+      );
+
+      // ✅ Mettre à jour selectedUser pour qu'il pointe sur la nouvelle photo
+      setSelectedUser(data.user);
+      setPreviewEditPhoto(
+        data.user.photo ? `http://localhost:3001/uploads/${data.user.photo}` : null
+      );
+
+      const modal = window.bootstrap.Modal.getInstance(
+        document.getElementById("editModal")
+      );
+      modal.hide();
+    } catch (error) {
+      console.error("Erreur de mise à jour :", error);
+      toast.error("Échec de la mise à jour de l’utilisateur.");
     }
+  };
 
-    // ✅ Récupérer la réponse du serveur
-    const { data } = await axios.put(
-      `http://localhost:3001/user/${selectedUser._id}`,
-      formDataToSend,
-      { headers: { "Content-Type": "multipart/form-data" } }
+  ///---Modal qui affiche les utilisateurs
+
+  const openViewModal = (user) => {
+    setSelectedUser(user);
+
+    const modal = new window.bootstrap.Modal(
+      document.getElementById("viewModal")
     );
+    modal.show();
+  };
 
-    toast.success("Utilisateur mis à jour avec succès !");
+  //*** Fonction de Suppression d'utilisateur par confirmation
 
-    // ✅ Utiliser les données retournées du serveur (data.user)
-    setUsers((prev) =>
-      prev.map((u) => (u._id === selectedUser._id ? data.user : u))
+  const openDeleteModal = (user) => {
+  setUserToDelete(user);
+
+  const modalEl = document.getElementById("confirmDeleteModal");
+  const modal = new window.bootstrap.Modal(modalEl);
+  modal.show();
+};
+
+
+const closeDeleteModal = () => {
+  const modalEl = document.getElementById("confirmDeleteModal");
+  const modalInstance = window.bootstrap.Modal.getInstance(modalEl);
+
+  if (modalInstance) {
+    modalInstance.hide();
+
+    modalEl.addEventListener(
+      "hidden.bs.modal",
+      () => {
+        // Nettoyage du backdrop et du scroll
+        document.body.classList.remove("modal-open");
+        const backdrop = document.querySelector(".modal-backdrop");
+        if (backdrop) backdrop.remove();
+      },
+      { once: true }
     );
-
-    // ✅ Mettre à jour selectedUser pour qu'il pointe sur la nouvelle photo
-    setSelectedUser(data.user);
-    setPreviewEditPhoto(
-      data.user.photo ? `http://localhost:3001/uploads/${data.user.photo}` : null
-    );
-
-    const modal = window.bootstrap.Modal.getInstance(
-      document.getElementById("editModal")
-    );
-    modal.hide();
-  } catch (error) {
-    console.error("Erreur de mise à jour :", error);
-    toast.error("Échec de la mise à jour de l’utilisateur.");
   }
 };
+
+const confirmDeleteUser = async () => {
+  try {
+    await axios.delete(`http://localhost:3001/delete/user/${userToDelete._id}`);
+
+    setUsers((prev) => prev.filter((u) => u._id !== userToDelete._id));
+
+    toast.success("Utilisateur supprimé avec succès !");
+  } catch (error) {
+    console.error(error);
+    toast.error("Erreur lors de la suppression.");
+  }
+
+  closeDeleteModal();
+};
+
+
 
 
   return (
     <div className="userTable container py-4">
       <div className="d-flex justify-content-between align-items-center mb-4">
-        <h3 className="fw-bold text-primary">Gestion des Invités</h3>
+        <div className="d-flex align-items-center gap-3">
+          <h3 className="fw-bold text-primary m-0">Gestion des Invités</h3>
+
+          {/* Bouton PDF */}
+          <button className="btn btn-outline-danger" onClick={generatePDF}>
+            <i className="fa-solid fa-file-pdf me-1"></i> Fiche PDF
+          </button>
+        </div>
 
         <Link
           to="/add"
@@ -266,6 +388,15 @@ const User = () => {
                 <td>{user.email}</td>
                 <td>{user.phone || "—"}</td>
                 <td className="actionButtons d-flex gap-2">
+
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => openViewModal(user)}
+                  >
+                    <i className="fa fa-eye"></i>
+                  </button>
+
                   <button
                     type="button"
                     className="btn btn-info"
@@ -273,13 +404,16 @@ const User = () => {
                   >
                     <i className="fa-solid fa-pen-to-square"></i>
                   </button>
+
                   <button
-                    onClick={() => deleteUser(user._id)}
                     type="button"
                     className="btn btn-danger"
+                    onClick={() => openDeleteModal(user)}
                   >
                     <i className="fa-solid fa-trash"></i>
                   </button>
+
+
                 </td>
               </tr>
             ))}
@@ -440,7 +574,7 @@ const User = () => {
                     <div className="text-center mb-3">
                       <img
                         src={previewEditPhoto}
-                       alt={selectedUser.name || "Profil"}
+                        alt={selectedUser.name || "Profil"}
                         className="img-fluid rounded-circle shadow-sm"
                         style={{
                           width: "120px",
@@ -479,6 +613,126 @@ const User = () => {
           </div>
         </div>
       </div>
+
+      {/* 🔹 Modal Voir Utilisateur */}
+      <div className="modal fade" id="viewModal" tabIndex="-1" aria-hidden="true">
+        <div className="modal-dialog modal-dialog-centered">
+          <div className="modal-content border-0 shadow">
+            <div className="modal-header bg-secondary text-white">
+              <h5 className="modal-title fw-semibold">Carte de visite </h5>
+              <button
+                type="button"
+                className="btn-close btn-close-white"
+                data-bs-dismiss="modal"
+                aria-label="Fermer"
+              ></button>
+            </div>
+
+            <div className="modal-body px-2">
+              {selectedUser && (
+                <div id="pdfContent" className="business-card container mt-3">
+
+                  <div className="card shadow-lg border-3 p-1 business-card-content">
+
+                    <div className="row g-3 align-items-center">
+                      <div className="col-4 col-md-3 text-center">
+                        {/* Photo */}
+                        <img
+                          src={
+                            selectedUser.photo
+                              ? `http://localhost:3001/uploads/${selectedUser.photo}`
+                              : "https://via.placeholder.com/120"
+                          }
+                          alt="profil"
+                          className="img-fluid rounded-circle shadow-sm mb-3 card-photo"
+                          style={{ width: "120px", height: "90px", objectFit: "cover" }}
+                        />
+                      </div>
+
+                      <div className="col-8 col-md-9">
+                        <h3 className="fw-bold m-2">{selectedUser.name}</h3>
+                        <p className="text-muted m-2">Développeur Full-Stack</p>
+
+                        <div className="mt-2 small contact-info">
+                          <p className="m-2"><i className="fa fa-phone"></i> {selectedUser.phone || "—"}</p>
+                          <p className="m-2"><i className="fa fa-envelope"></i> {selectedUser.email}</p>
+                          <p className="m-2"><i className="fa fa-map-marker-alt"></i> {selectedUser.address}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+              )}
+
+              <div className="d-grid mt-3">
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={downloadPDF}
+                >
+                  <i className="fa fa-download me-2"></i>
+                  Télécharger la fiche PDF
+                </button>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 🔹 Modal de Suppression  d'un Utilisateur */}
+      <div
+        className="modal fade"
+        id="confirmDeleteModal"
+        tabIndex="-1"
+        aria-labelledby="deleteModalLabel"
+        aria-hidden="true"
+      >
+        <div className="modal-dialog modal-dialog-centered">
+          <div className="modal-content">
+
+            <div className="modal-header">
+              <h5 className="modal-title text-danger" id="deleteModalLabel">
+                Confirmation de suppression
+              </h5>
+              <button type="button" className="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+
+            <div className="modal-body">
+              {userToDelete ? (
+                <>
+                  Voulez-vous vraiment supprimer <strong>{userToDelete.name}</strong> ?
+                  <br />
+                  Cette action est <span className="text-danger fw-bold">irréversible</span>.
+                </>
+              ) : (
+                "Chargement..."
+              )}
+            </div>
+
+            <div className="modal-footer justify-content-center">
+              <button
+                className="btn btn-secondary"
+                data-bs-dismiss="modal"
+              >
+                Annuler
+              </button>
+
+              <button
+                className="btn btn-danger"
+                onClick={() => confirmDeleteUser()}
+              >
+                Supprimer
+              </button>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+
+
     </div>
   );
 };

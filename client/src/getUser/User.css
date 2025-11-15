@@ -28,4 +28,34 @@
     margin-top: 20px;
     text-align : center;
   }
+
+  .business-card-content {
+    border-radius: 20px;
+    background: #fff;
+    border: 1px solid #eee;
+}
+
+.card-photo {
+    width: 100px;
+    height: 100px;
+    object-fit: cover;
+}
+
+/* Mobile-friendly amélioré */
+@media (max-width: 768px) {
+    .business-card-content {
+        text-align: center;
+        padding: 20px;
+    }
+
+    .card-photo {
+        width: 80px;
+        height: 80px;
+    }
+
+    .contact-info p {
+        font-size: 14px;
+    }
+}
+
   
