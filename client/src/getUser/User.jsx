@@ -18,8 +18,14 @@ import "datatables.net-bs5/css/dataTables.bootstrap5.min.css";
 const User = () => {
   const [users, setUsers] = useState([]);
   const [errorMsg, setErrorMsg] = useState("");
-  const [loading, setLoading] = useState(true);
   const [userToDelete, setUserToDelete] = useState(null);
+  const [base64Photo, setBase64Photo] = useState(null);
+
+  const [loading, setLoading] = useState(true);
+  const [loadingUpdate, setLoadingUpdate] = useState(false);
+  const [loadingAdd, setLoadingAdd] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
   const [formData, setFormData] = useState({
     name: "",
     address: "",
@@ -32,6 +38,37 @@ const User = () => {
   const [previewEditPhoto, setPreviewEditPhoto] = useState(null);
 
   const modalRef = useRef(null);
+
+  //----Fonction utilitaire pour convertir une image URL → Base64
+  const toBase64 = (url) =>
+    fetch(url)
+      .then(res => res.blob())
+      .then(
+        blob =>
+          new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(blob);
+          })
+      );
+
+  //---Charger automatiquement la photo Base64 quand selectedUser change
+  useEffect(() => {
+    const loadPhoto = async () => {
+      if (selectedUser) {
+        const photoUrl = selectedUser.photo
+          ? `http://localhost:3001/uploads/${selectedUser.photo}`
+          : "http://localhost:3001/uploads/Default.jpg";
+
+        const base64 = await toBase64(photoUrl);
+        setBase64Photo(base64);
+      }
+    };
+
+    loadPhoto();
+  }, [selectedUser]);
+
+
 
   // 🔹 Charger les utilisateurs
   useEffect(() => {
@@ -72,31 +109,33 @@ const User = () => {
   }, [users.length]);
 
 
-  //--- Composant PDF d'un utilisateur
+  //--- Composant PDF d'un utilisateur en carte de visite
 
-  const downloadPDF = async () => {
-    const element = document.getElementById("pdfContent");
+const downloadPDF = async () => {
+  const element = document.getElementById("pdfContent");
 
-    if (!element) {
-      toast.error("Erreur : contenu PDF introuvable !");
-      return;
-    }
+  if (!element) {
+    toast.error("Erreur : contenu PDF introuvable !");
+    return;
+  }
 
-    const canvas = await html2canvas(element, {
-      scale: 2,
-      useCORS: true
-    });
+  const canvas = await html2canvas(element, {
+    scale: 2,
+    useCORS: true,
+    allowTaint: false,
+    taintTest: false,
+    imageTimeout: 0,
+  });
 
-    const imgData = canvas.toDataURL("image/png");
-    const pdf = new jsPDF("p", "mm", "a4");
+  const imgData = canvas.toDataURL("image/png");
+  const pdf = new jsPDF("p", "mm", "a4");
 
-    const imgWidth = 190;
-    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+  const imgWidth = 190;
+  const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
-    pdf.addImage(imgData, "PNG", 10, 10, imgWidth, imgHeight);
-
-    pdf.save(`Fiche-${selectedUser.name.replace(/\s+/g, "_")}.pdf`);
-  };
+  pdf.addImage(imgData, "PNG", 10, 10, imgWidth, imgHeight);
+  pdf.save(`Fiche-${selectedUser.name.replace(/\s+/g, "_")}.pdf`);
+};
 
 
   /* Générateur PDF des utilisateurs*/
@@ -109,7 +148,7 @@ const User = () => {
     doc.text("Liste des Invités", 14, 20);
 
     // Construire le tableau
-    const tableColumn = ["Nom", "Email", "Téléphone", "Address"];
+    const tableColumn = ["Noms", "Email", "Téléphones", "Fonctions", "Address"];
     const tableRows = [];
 
     users.forEach((user) => {
@@ -117,6 +156,7 @@ const User = () => {
         user.name,
         user.email,
         user.phone,
+        user.role,
         user.address,
       ]);
     });
@@ -174,7 +214,11 @@ const User = () => {
   // 🔹 Soumission formulaire ajout
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const preview = document.getElementById("previewphoto");
+
     try {
+      setLoadingAdd(true); // ⬅️ DÉBUT DU LOADER
+
       const formDataToSend = new FormData();
       Object.entries(formData).forEach(([key, value]) => {
         formDataToSend.append(key, value);
@@ -188,15 +232,35 @@ const User = () => {
 
       toast.success("Invité ajouté avec succès !");
       setUsers((prev) => [...prev, response.data.user]);
-      setFormData({ name: "", address: "", email: "", phone: "", photo: null });
 
+      // 🔹 Reset total du formulaire
+      setFormData({
+        name: "",
+        address: "",
+        email: "",
+        phone: "",
+        role: "",
+        photo: null
+      });
+
+      // 🔹 Reset du file input
+      document.getElementById("photo").value = "";
+
+      // 🔹 Reset preview
+      preview.innerHTML = "";
+
+      // 🔹 Fermer modal
       const modal = window.bootstrap.Modal.getInstance(modalRef.current);
       modal.hide();
+
     } catch (error) {
       console.error("Erreur d'ajout :", error);
       toast.error("Échec de l’ajout de l’utilisateur.");
+    } finally {
+      setLoadingAdd(false); // ⬅️ FIN DU LOADER
     }
   };
+
 
   // 🔹 Ouvrir le modal d'édition
   const openEditModal = (user) => {
@@ -229,18 +293,20 @@ const User = () => {
   const handleUpdate = async (e) => {
     e.preventDefault();
 
+    setLoadingUpdate(true); // 👉 Activer loader
+
     try {
       const formDataToSend = new FormData();
       formDataToSend.append("name", selectedUser.name);
       formDataToSend.append("email", selectedUser.email);
       formDataToSend.append("address", selectedUser.address);
       formDataToSend.append("phone", selectedUser.phone);
+      formDataToSend.append("role", selectedUser.role);
 
       if (selectedUser.photo instanceof File) {
         formDataToSend.append("photo", selectedUser.photo);
       }
 
-      // ✅ Récupérer la réponse du serveur
       const { data } = await axios.put(
         `http://localhost:3001/user/${selectedUser._id}`,
         formDataToSend,
@@ -249,26 +315,40 @@ const User = () => {
 
       toast.success("Utilisateur mis à jour avec succès !");
 
-      // ✅ Utiliser les données retournées du serveur (data.user)
       setUsers((prev) =>
         prev.map((u) => (u._id === selectedUser._id ? data.user : u))
       );
 
-      // ✅ Mettre à jour selectedUser pour qu'il pointe sur la nouvelle photo
       setSelectedUser(data.user);
       setPreviewEditPhoto(
         data.user.photo ? `http://localhost:3001/uploads/${data.user.photo}` : null
       );
 
+      // 👉 Fermeture propre du modal
       const modal = window.bootstrap.Modal.getInstance(
         document.getElementById("editModal")
       );
       modal.hide();
+
+      // 👉 Attendre que le fade-out soit terminé puis nettoyer backdrop
+      setTimeout(() => {
+        document.querySelectorAll(".modal-backdrop").forEach((el) => el.remove());
+        document.body.classList.remove("modal-open");
+        document.body.style = "";
+      }, 300);
+
+      setSelectedUser(null);
+      setPreviewEditPhoto(null);
+
+
     } catch (error) {
       console.error("Erreur de mise à jour :", error);
       toast.error("Échec de la mise à jour de l’utilisateur.");
     }
+
+    setLoadingUpdate(false); // 👉 Désactiver loader
   };
+
 
   ///---Modal qui affiche les utilisateurs
 
@@ -284,48 +364,54 @@ const User = () => {
   //*** Fonction de Suppression d'utilisateur par confirmation
 
   const openDeleteModal = (user) => {
-  setUserToDelete(user);
+    setUserToDelete(user);
 
-  const modalEl = document.getElementById("confirmDeleteModal");
-  const modal = new window.bootstrap.Modal(modalEl);
-  modal.show();
-};
+    const modalEl = document.getElementById("confirmDeleteModal");
+    const modal = new window.bootstrap.Modal(modalEl);
+    modal.show();
+  };
 
 
-const closeDeleteModal = () => {
-  const modalEl = document.getElementById("confirmDeleteModal");
-  const modalInstance = window.bootstrap.Modal.getInstance(modalEl);
+  const closeDeleteModal = () => {
+    const modalEl = document.getElementById("confirmDeleteModal");
+    const modalInstance = window.bootstrap.Modal.getInstance(modalEl);
 
-  if (modalInstance) {
-    modalInstance.hide();
+    if (modalInstance) {
+      modalInstance.hide();
 
-    modalEl.addEventListener(
-      "hidden.bs.modal",
-      () => {
-        // Nettoyage du backdrop et du scroll
-        document.body.classList.remove("modal-open");
-        const backdrop = document.querySelector(".modal-backdrop");
-        if (backdrop) backdrop.remove();
-      },
-      { once: true }
-    );
-  }
-};
+      modalEl.addEventListener(
+        "hidden.bs.modal",
+        () => {
+          // Nettoyage du backdrop et du scroll
+          document.body.classList.remove("modal-open");
+          const backdrop = document.querySelector(".modal-backdrop");
+          if (backdrop) backdrop.remove();
+        },
+        { once: true }
+      );
+    }
+  };
 
-const confirmDeleteUser = async () => {
-  try {
-    await axios.delete(`http://localhost:3001/delete/user/${userToDelete._id}`);
+  const confirmDeleteUser = async () => {
+    try {
+      setDeleteLoading(true); // ⬅️ Démarre le loader
 
-    setUsers((prev) => prev.filter((u) => u._id !== userToDelete._id));
+      await axios.delete(`http://localhost:3001/delete/user/${userToDelete._id}`);
 
-    toast.success("Utilisateur supprimé avec succès !");
-  } catch (error) {
-    console.error(error);
-    toast.error("Erreur lors de la suppression.");
-  }
+      setUsers((prev) => prev.filter((u) => u._id !== userToDelete._id));
 
-  closeDeleteModal();
-};
+      toast.success("Utilisateur supprimé avec succès !");
+    } catch (error) {
+      console.error(error);
+      toast.error("Erreur lors de la suppression.");
+    }
+
+    setDeleteLoading(false); // ⬅️ Arrête le loader
+    closeDeleteModal();
+  };
+
+
+  /* Fin de la suppression d'un utilisateur*/
 
 
 
@@ -481,6 +567,14 @@ const confirmDeleteUser = async () => {
                   value={formData.phone}
                   onChange={handleInputChange}
                 />
+                <input
+                  type="text"
+                  name="role"
+                  placeholder="Fonction"
+                  className="form-control my-3"
+                  value={formData.role}
+                  onChange={handleInputChange}
+                />
 
                 <div id="previewphoto" className="text-center mb-3"></div>
 
@@ -502,9 +596,14 @@ const confirmDeleteUser = async () => {
                 </div>
 
                 <div className="d-grid">
-                  <button type="submit" className="btn btn-danger">
-                    Ajouter Invité
+                  <button type="submit" className="btn btn-danger" disabled={loadingAdd}>
+                    {loadingAdd ? (
+                      <span className="spinner-border spinner-border-sm"></span>
+                    ) : (
+                      "Ajouter Invité"
+                    )}
                   </button>
+
                 </div>
               </form>
             </div>
@@ -569,6 +668,14 @@ const confirmDeleteUser = async () => {
                     value={selectedUser.phone}
                     onChange={handleEditChange}
                   />
+                  <input
+                    type="tel"
+                    name="role"
+                    placeholder="Fonction"
+                    className="form-control my-3"
+                    value={selectedUser.role}
+                    onChange={handleEditChange}
+                  />
 
                   {selectedUser.name && (
                     <div className="text-center mb-3">
@@ -603,9 +710,14 @@ const confirmDeleteUser = async () => {
                   </div>
 
                   <div className="d-grid">
-                    <button type="submit" className="btn btn-primary">
-                      Enregistrer les modifications
+                    <button type="submit" className="btn btn-primary" disabled={loadingUpdate}>
+                      {loadingUpdate ? (
+                        <span className="spinner-border spinner-border-sm"></span>
+                      ) : (
+                        "Enregistrer les modifications"
+                      )}
                     </button>
+
                   </div>
                 </form>
               )}
@@ -614,7 +726,7 @@ const confirmDeleteUser = async () => {
         </div>
       </div>
 
-      {/* 🔹 Modal Voir Utilisateur */}
+      {/* 🔹 Modal Voir Utilisateur en carte de visite */}
       <div className="modal fade" id="viewModal" tabIndex="-1" aria-hidden="true">
         <div className="modal-dialog modal-dialog-centered">
           <div className="modal-content border-0 shadow">
@@ -638,11 +750,7 @@ const confirmDeleteUser = async () => {
                       <div className="col-4 col-md-3 text-center">
                         {/* Photo */}
                         <img
-                          src={
-                            selectedUser.photo
-                              ? `http://localhost:3001/uploads/${selectedUser.photo}`
-                              : "https://via.placeholder.com/120"
-                          }
+                          src={base64Photo}
                           alt="profil"
                           className="img-fluid rounded-circle shadow-sm mb-3 card-photo"
                           style={{ width: "120px", height: "90px", objectFit: "cover" }}
@@ -651,7 +759,7 @@ const confirmDeleteUser = async () => {
 
                       <div className="col-8 col-md-9">
                         <h3 className="fw-bold m-2">{selectedUser.name}</h3>
-                        <p className="text-muted m-2">Développeur Full-Stack</p>
+                        <p className="text-muted m-2">{selectedUser.role}</p>
 
                         <div className="mt-2 small contact-info">
                           <p className="m-2"><i className="fa fa-phone"></i> {selectedUser.phone || "—"}</p>
@@ -715,16 +823,24 @@ const confirmDeleteUser = async () => {
               <button
                 className="btn btn-secondary"
                 data-bs-dismiss="modal"
+                disabled={deleteLoading}   // Optionnel : pour éviter double clic
               >
                 Annuler
               </button>
 
               <button
+                type="button"
                 className="btn btn-danger"
-                onClick={() => confirmDeleteUser()}
+                onClick={confirmDeleteUser}
+                disabled={deleteLoading}
               >
-                Supprimer
+                {deleteLoading ? (
+                  <span className="spinner-border spinner-border-sm"></span>
+                ) : (
+                  "Supprimer"
+                )}
               </button>
+
             </div>
 
           </div>

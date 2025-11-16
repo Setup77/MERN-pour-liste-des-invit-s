@@ -6,6 +6,7 @@ const userSchema = new Schema({
   email: { type: String, required: true, unique: true },
   address: { type: String },
   phone: { type: String },
+  role: { type: String },
   photo: { type: String }, // stockera juste le nom du fichier ou l’URL
 }, { timestamps: true });
 

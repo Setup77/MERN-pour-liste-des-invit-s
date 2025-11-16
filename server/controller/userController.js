@@ -4,8 +4,8 @@ const path = require("path");
 
 exports.create = async (req, res) => {
   try {
-    const { name, email, address, phone } = req.body;
-    const photo = req.file ? req.file.filename : null;
+    const { name, email, address, phone, role} = req.body;
+    const photo = req.file ? req.file.filename : "Default.jpg";
 
     // Vérifie si un utilisateur existe déjà
     const userExist = await User.findOne({ email });
@@ -19,6 +19,7 @@ exports.create = async (req, res) => {
       email,
       address,
       phone,
+      role,
       photo,
     });
 
@@ -78,8 +79,8 @@ exports.update = async (req, res) => {
 
     // 📸 Si une nouvelle photo a été envoyée
     if (req.file) {
-      // Supprimer l'ancienne photo si elle existe
-      if (userExist.photo) {
+      // Supprimer l'ancienne photo si elle existe et différente de image Default
+      if (userExist.photo && userExist.photo != "Default.jpg") {
         const oldPath = path.join(__dirname, "../uploads", userExist.photo);
         fs.access(oldPath, fs.constants.F_OK, (err) => {
           if (!err) {
@@ -119,8 +120,8 @@ exports.deleteUser = async (req, res) => {
       return res.status(404).json({ message: "User not found." });
     }
 
-    // Suppression du fichier photo
-    if (user.photo) {
+    // Suppression du fichier photo différente de la photo default
+    if (user.photo && user.photo != "Default.jpg") {
       const filePath = path.join(__dirname, "../uploads/", user.photo);
 
       if (fs.existsSync(filePath)) {
